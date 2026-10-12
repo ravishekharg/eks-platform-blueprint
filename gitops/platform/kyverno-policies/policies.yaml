@@ -1,0 +1,115 @@
+# Admission policies: the same rules the Helm library chart follows, enforced for anything
+# that reaches the cluster (raw manifests, other charts, kubectl). Platform namespaces are
+# excluded so add-ons with their own conventions still install.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: disallow-latest-tag
+  annotations:
+    policies.kyverno.io/description: Images must use an immutable tag or digest so rollbacks and audits mean something.
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    - name: require-immutable-tag
+      match:
+        any:
+          - resources: { kinds: [Pod] }
+      exclude:
+        any:
+          - resources: { namespaces: [kube-system, kyverno, monitoring, argocd] }
+      validate:
+        message: "Use an immutable image tag or digest, not ':latest' or no tag."
+        pattern:
+          spec:
+            containers:
+              - image: "!*:latest & *:*"
+---
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-requests-and-probes
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    - name: require-requests-memory-limit
+      match:
+        any:
+          - resources: { kinds: [Pod] }
+      exclude:
+        any:
+          - resources: { namespaces: [kube-system, kyverno, monitoring, argocd] }
+      validate:
+        message: "CPU/memory requests and a memory limit are required."
+        pattern:
+          spec:
+            containers:
+              - resources:
+                  requests: { cpu: "?*", memory: "?*" }
+                  limits: { memory: "?*" }
+    - name: require-readiness-probe
+      match:
+        any:
+          - resources: { kinds: [Pod] }
+      exclude:
+        any:
+          - resources: { namespaces: [kube-system, kyverno, monitoring, argocd] }
+      validate:
+        message: "A readiness probe is required so rollouts are zero-downtime."
+        pattern:
+          spec:
+            containers:
+              - readinessProbe: { periodSeconds: ">0" }
+---
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: restrict-privileges
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    - name: non-root-no-escalation
+      match:
+        any:
+          - resources: { kinds: [Pod] }
+      exclude:
+        any:
+          - resources: { namespaces: [kube-system, kyverno, monitoring, argocd] }
+      validate:
+        message: "Containers must run as non-root without privilege escalation."
+        pattern:
+          spec:
+            =(securityContext):
+              =(runAsNonRoot): true
+            containers:
+              - securityContext:
+                  allowPrivilegeEscalation: false
+                  =(privileged): false
+---
+# Production guard: a Deployment synced with replicas 0 or 1 takes a service down or leaves it
+# without redundancy. Applies only to namespaces labelled env=prod.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: prod-min-replicas
+spec:
+  validationFailureAction: Enforce
+  background: false
+  rules:
+    - name: at-least-two-replicas
+      match:
+        any:
+          - resources:
+              kinds: [Deployment]
+              namespaceSelector:
+                matchLabels: { env: prod }
+      preconditions:
+        all:
+          - key: "{{ request.object.spec.replicas || `2` }}"
+            operator: LessThan
+            value: 2
+      validate:
+        message: "Production Deployments need at least 2 replicas (or an HPA)."
+        deny: {}

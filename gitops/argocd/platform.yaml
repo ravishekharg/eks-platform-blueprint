@@ -1,0 +1,125 @@
+# Cluster add-ons. Core add-ons go to every managed cluster; AWS add-ons only to clusters
+# labelled provider=aws (EKS). Chart versions are pinned here and upgraded by pull request.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: platform-core
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - matrix:
+        generators:
+          - clusters:
+              selector:
+                matchLabels:
+                  blueprint/managed: "true"
+          - list:
+              elements:
+                - { addon: metrics-server, repo: "https://kubernetes-sigs.github.io/metrics-server", chart: metrics-server, version: "3.12.2", namespace: kube-system, wave: "0" }
+                - { addon: kyverno, repo: "https://kyverno.github.io/kyverno", chart: kyverno, version: "3.3.4", namespace: kyverno, wave: "0" }
+                - { addon: kube-prometheus-stack, repo: "https://prometheus-community.github.io/helm-charts", chart: kube-prometheus-stack, version: "66.3.1", namespace: monitoring, wave: "1" }
+  template:
+    metadata:
+      name: '{{ .addon }}-{{ index .metadata.labels "env" }}'
+      annotations:
+        argocd.argoproj.io/sync-wave: '{{ .wave }}'
+    spec:
+      project: platform
+      sources:
+        - repoURL: '{{ .repo }}'
+          chart: '{{ .chart }}'
+          targetRevision: '{{ .version }}'
+          helm:
+            releaseName: '{{ .addon }}'
+            valueFiles: ['$values/gitops/platform/values/{{ .addon }}.yaml']
+            ignoreMissingValueFiles: true
+        - repoURL: https://github.com/ravishekharg/eks-platform-blueprint.git
+          targetRevision: main
+          ref: values
+      destination:
+        server: '{{ .server }}'
+        namespace: '{{ .namespace }}'
+      syncPolicy:
+        automated: { prune: true, selfHeal: true }
+        syncOptions: [CreateNamespace=true, ServerSideApply=true]
+---
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: platform-policies
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - clusters:
+        selector:
+          matchLabels:
+            blueprint/managed: "true"
+  template:
+    metadata:
+      name: 'kyverno-policies-{{ index .metadata.labels "env" }}'
+    spec:
+      project: platform
+      source:
+        repoURL: https://github.com/ravishekharg/eks-platform-blueprint.git
+        targetRevision: main
+        path: gitops/platform/kyverno-policies
+      destination:
+        server: '{{ .server }}'
+        namespace: kyverno
+      syncPolicy:
+        automated: { prune: true, selfHeal: true }
+        # Retries until Kyverno (installed by platform-core) has registered its CRDs.
+        retry: { limit: 10, backoff: { duration: 20s, factor: 2, maxDuration: 5m } }
+---
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: platform-aws
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - clusters:
+        selector:
+          matchLabels:
+            blueprint/managed: "true"
+            provider: aws
+  template:
+    metadata:
+      name: 'karpenter-{{ index .metadata.labels "env" }}'
+    spec:
+      project: platform
+      sources:
+        - repoURL: public.ecr.aws/karpenter
+          chart: karpenter
+          targetRevision: "1.1.1"
+          helm:
+            releaseName: karpenter
+            valuesObject:
+              settings:
+                # Terraform outputs, written onto the Argo CD cluster secret as annotations
+                # by scripts/register-cluster.sh.
+                clusterName: '{{ .name }}'
+                interruptionQueue: '{{ index .metadata.annotations "blueprint/karpenter-queue" }}'
+              tolerations:
+                - { key: CriticalAddonsOnly, operator: Exists }
+              nodeSelector:
+                node-role: system
+        - repoURL: https://github.com/ravishekharg/eks-platform-blueprint.git
+          targetRevision: main
+          path: gitops/platform/karpenter-config
+          helm:
+            valuesObject:
+              clusterName: '{{ .name }}'
+              nodeRole: '{{ index .metadata.annotations "blueprint/karpenter-node-role" }}'
+      destination:
+        server: '{{ .server }}'
+        namespace: kube-system
+      syncPolicy:
+        automated: { prune: true, selfHeal: true }
+        syncOptions: [ServerSideApply=true]

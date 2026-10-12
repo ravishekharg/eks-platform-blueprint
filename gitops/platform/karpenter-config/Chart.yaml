@@ -1,0 +1,5 @@
+apiVersion: v2
+name: karpenter-config
+description: Karpenter NodePools and EC2NodeClass for this platform (values come from Terraform outputs).
+type: application
+version: 1.0.0

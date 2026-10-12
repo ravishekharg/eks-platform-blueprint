@@ -1,0 +1,6 @@
+clusterName: ""   # set by the platform-aws ApplicationSet from the cluster secret
+nodeRole: ""
+# Hard cap on what Karpenter may provision: a runaway Deployment can't create a huge bill.
+limits:
+  cpu: "200"
+  memory: 800Gi

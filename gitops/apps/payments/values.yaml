@@ -1,0 +1,12 @@
+team: payments
+partOf: shop
+image:
+  repository: ghcr.io/ravishekharg/eks-platform-blueprint/sample-app
+  tag: "0.1.0"
+env:
+  STARTUP_DELAY_SECONDS: "5"
+  DRAIN_SECONDS: "10"
+  ORDERS_URL: http://orders.orders.svc.cluster.local
+# Longer drain for payments so in-flight transactions finish.
+preStopSleepSeconds: 15
+terminationGracePeriodSeconds: 60

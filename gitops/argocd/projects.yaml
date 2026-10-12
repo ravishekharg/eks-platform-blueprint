@@ -1,0 +1,42 @@
+# Projects are the guard rails: which repos, clusters, namespaces and kinds each group of apps
+# may use. Application teams can't create cluster-scoped objects; the platform project can.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: platform
+  namespace: argocd
+spec:
+  description: Cluster add-ons owned by the platform team
+  sourceRepos:
+    - https://github.com/ravishekharg/eks-platform-blueprint.git
+    - https://kubernetes-sigs.github.io/metrics-server
+    - https://prometheus-community.github.io/helm-charts
+    - https://kyverno.github.io/kyverno
+    - public.ecr.aws/karpenter
+  destinations:
+    - server: "*"
+      namespace: "*"
+  clusterResourceWhitelist:
+    - group: "*"
+      kind: "*"
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: apps
+  namespace: argocd
+spec:
+  description: Application services; namespaced objects only
+  sourceRepos:
+    - https://github.com/ravishekharg/eks-platform-blueprint.git
+  destinations:
+    - server: "*"
+      namespace: orders
+    - server: "*"
+      namespace: payments
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+  namespaceResourceBlacklist:
+    - group: ""
+      kind: ResourceQuota       # quotas are set by the platform, not by the app

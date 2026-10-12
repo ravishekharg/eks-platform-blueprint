@@ -1,0 +1,9 @@
+# One replica each for small clusters; 3 admission controller replicas in production for HA.
+admissionController:
+  replicas: 1
+backgroundController:
+  replicas: 1
+cleanupController:
+  replicas: 1
+reportsController:
+  replicas: 1

@@ -1,0 +1,5 @@
+env:
+  ENVIRONMENT: dev
+replicas: 2
+monitoring:
+  serviceMonitor: true

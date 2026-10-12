@@ -1,0 +1,54 @@
+# Every directory under gitops/apps is a service. Every cluster registered in Argo CD with the
+# label blueprint/managed=true gets every service, with values-<env>.yaml layered on top of
+# values.yaml. Adding a service = adding a directory; adding a cluster = registering it.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: apps
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - matrix:
+        generators:
+          - clusters:
+              selector:
+                matchLabels:
+                  blueprint/managed: "true"
+          - git:
+              repoURL: https://github.com/ravishekharg/eks-platform-blueprint.git
+              revision: main
+              directories:
+                - path: gitops/apps/*
+  template:
+    metadata:
+      name: '{{ .path.basename }}-{{ index .metadata.labels "env" }}'
+      labels:
+        env: '{{ index .metadata.labels "env" }}'
+    spec:
+      project: apps
+      source:
+        repoURL: https://github.com/ravishekharg/eks-platform-blueprint.git
+        targetRevision: main
+        path: charts/microservice
+        helm:
+          releaseName: '{{ .path.basename }}'
+          valueFiles:
+            - '../../gitops/apps/{{ .path.basename }}/values.yaml'
+            - '../../gitops/apps/{{ .path.basename }}/values-{{ index .metadata.labels "env" }}.yaml'
+          ignoreMissingValueFiles: true
+      destination:
+        server: '{{ .server }}'
+        namespace: '{{ .path.basename }}'
+      syncPolicy:
+        automated: { prune: true, selfHeal: true }
+        syncOptions: [CreateNamespace=true, ServerSideApply=true]
+        retry:
+          limit: 5
+          backoff: { duration: 10s, factor: 2, maxDuration: 3m }
+      # When autoscaling is on, the HPA owns replicas; don't fight it.
+      ignoreDifferences:
+        - group: apps
+          kind: Deployment
+          jsonPointers: [/spec/replicas]

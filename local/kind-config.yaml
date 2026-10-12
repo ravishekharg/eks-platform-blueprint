@@ -1,0 +1,13 @@
+# Local stand-in for EKS: one control plane and two workers labelled as different zones, so
+# topology spread constraints and PodDisruptionBudgets behave as they would across AZs.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: blueprint
+nodes:
+  - role: control-plane
+  - role: worker
+    labels:
+      topology.kubernetes.io/zone: zone-a
+  - role: worker
+    labels:
+      topology.kubernetes.io/zone: zone-b

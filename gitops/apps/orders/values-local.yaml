@@ -1,0 +1,7 @@
+# kind cluster: scripts/local-up.sh builds the image and loads it into kind.
+image:
+  repository: sample-app
+  tag: local
+env:
+  ENVIRONMENT: local
+replicas: 2

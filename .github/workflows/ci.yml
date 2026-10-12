@@ -1,0 +1,113 @@
+# Every pull request proves the platform still builds, renders and passes policy:
+# Terraform is formatted, valid, linted and security-scanned; every service renders for every
+# environment and validates against the Kubernetes schemas and the Kyverno policies that the
+# cluster enforces; the app's tests pass and its image has no fixable critical CVEs.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  terraform:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        env: [dev, prod]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.15.6
+      - name: fmt
+        run: terraform fmt -check -recursive terraform
+      - name: init (no backend) and validate
+        working-directory: terraform/envs/${{ matrix.env }}
+        run: |
+          terraform init -backend=false -input=false
+          terraform validate
+      - uses: terraform-linters/setup-tflint@v4
+      - name: tflint
+        working-directory: terraform/envs/${{ matrix.env }}
+        run: tflint --init && tflint --recursive --chdir ../..
+      - name: checkov (security misconfigurations)
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: terraform
+          framework: terraform
+          quiet: true
+          soft_fail: false
+          # Skips that are deliberate trade-offs, each documented in docs/decisions.md.
+          skip_check: CKV_AWS_37,CKV_AWS_158,CKV_AWS_338,CKV_AWS_289,CKV_AWS_355,CKV2_AWS_19
+
+  charts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.16.2
+      - name: lint the charts
+        run: |
+          helm dependency build charts/microservice
+          helm lint charts/microservice --set image.repository=x --set image.tag=1.0.0
+      - name: render every service for every environment
+        run: |
+          mkdir -p rendered
+          for svc in $(ls gitops/apps); do
+            for env in local dev prod; do
+              helm template "$svc" charts/microservice \
+                -f "gitops/apps/$svc/values.yaml" -f "gitops/apps/$svc/values-$env.yaml" \
+                > "rendered/$svc-$env.yaml"
+            done
+          done
+          helm template karpenter-config gitops/platform/karpenter-config \
+            --set clusterName=ci --set nodeRole=ci > rendered/karpenter-config.yaml
+          ls -l rendered
+      - name: guard rails reject unsafe values
+        run: |
+          ! helm template x charts/microservice --set image.repository=x --set image.tag=latest
+          ! helm template x charts/microservice --set image.repository=x
+      - name: kubeconform (schema validation, CRDs from the community catalog)
+        run: |
+          curl -sSL https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz | tar xz
+          ./kubeconform -strict -summary -kubernetes-version 1.34.0 \
+            -schema-location default \
+            -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
+            rendered/ gitops/argocd/ gitops/bootstrap/ gitops/platform/kyverno-policies/
+      - name: kyverno policies (every service passes, unsafe manifests are rejected)
+        run: pip install pyyaml && bash scripts/policy-test.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rendered-manifests
+          path: rendered/
+
+  app:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: tests
+        working-directory: app
+        run: |
+          pip install -r requirements.txt pytest httpx
+          pytest -q
+      - name: build image
+        run: docker build -t sample-app:${{ github.sha }} app
+      - name: scan image (fail on fixable critical CVEs)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: sample-app:${{ github.sha }}
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"

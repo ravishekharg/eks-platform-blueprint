@@ -1,0 +1,64 @@
+# Defaults for every service. A service's values file overrides only what differs.
+name: ""            # defaults to the release name
+team: ""
+partOf: platform
+
+image:
+  repository: ""
+  tag: ""           # required: immutable version or git SHA (never "latest")
+  digest: ""        # optional: pin by digest for full certainty
+
+containerPort: 8080
+replicas: 2
+minReadySeconds: 5
+rollout:
+  maxSurge: 25%
+
+# Graceful shutdown: preStop sleep removes the pod from load balancing first; the grace period
+# must be longer than preStop + the slowest request.
+preStopSleepSeconds: 10
+terminationGracePeriodSeconds: 45
+
+resources:
+  requests: { cpu: 100m, memory: 128Mi }
+  limits: { memory: 256Mi }       # memory limit = OOM protection; no CPU limit (avoids throttling)
+
+probes:
+  livenessPath: /health
+  readinessPath: /ready
+  startupFailureThreshold: 30     # up to 60 s to start
+
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilization: 70
+
+serviceAccount:
+  automountToken: false           # most apps never call the Kubernetes API
+
+service:
+  preferSameZone: true
+
+env: {}                           # plain config: KEY: value
+envFromSecrets: []                # Secret names, typically created by External Secrets
+
+networkPolicy:
+  enabled: true
+  ingressNamespace: ingress-nginx
+  monitoringNamespace: monitoring
+  allowFromApps: []
+
+monitoring:
+  serviceMonitor: false           # true once the Prometheus Operator CRDs exist
+
+ingress:
+  enabled: false
+  className: nginx
+  host: ""
+  path: /
+  annotations: {}
+
+priorityClassName: ""
+nodeSelector: {}
+tolerations: []

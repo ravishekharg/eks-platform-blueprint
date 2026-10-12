@@ -1,0 +1,10 @@
+# Lean defaults for a small cluster; production adds remote write (AMP/Mimir) and persistent storage.
+prometheus:
+  prometheusSpec:
+    retention: 7d
+    # Pick up ServiceMonitors from every namespace, not only this release's.
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+    resources:
+      requests: { cpu: 200m, memory: 512Mi }

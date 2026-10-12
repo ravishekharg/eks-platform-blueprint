@@ -1,0 +1,4 @@
+tolerations:
+  - { key: CriticalAddonsOnly, operator: Exists }
+args:
+  - --kubelet-preferred-address-types=InternalIP

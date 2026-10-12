@@ -1,0 +1,10 @@
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+charts/*/charts/*.tgz
+rendered/
+__pycache__/
+.pytest_cache/
+.venv/

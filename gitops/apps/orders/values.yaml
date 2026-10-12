@@ -1,0 +1,11 @@
+# orders: common to every environment. CI updates the image tag on merge to main.
+team: orders
+partOf: shop
+image:
+  repository: ghcr.io/ravishekharg/eks-platform-blueprint/sample-app
+  tag: "0.1.0"
+env:
+  STARTUP_DELAY_SECONDS: "3"
+  DRAIN_SECONDS: "5"
+networkPolicy:
+  allowFromApps: [payments]      # payments calls orders
