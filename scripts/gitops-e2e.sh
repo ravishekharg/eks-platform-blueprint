@@ -35,8 +35,23 @@ app_list=$(echo "$apps" | jq -c '[.items[] | {name: .metadata.name, sync: .statu
 echo "   all $total Applications Synced/Healthy after ${converged}s (cluster creation included)"
 
 echo "== the services answer"
-k -n default run probe --image=curlimages/curl:8.11.1 --restart=Never --command -- sh -c \
-  'for s in orders.orders payments.payments; do printf "%s %s\n" "$s" "$(curl -s -o /dev/null -m 5 -w "%{http_code}" http://$s/)"; done' >/dev/null
+# the test client is an ordinary pod in an ordinary namespace, so it must meet the same Kyverno policies as
+# everything else (immutable tag, requests and a memory limit, a readiness probe, non-root): no exemption for tests
+k -n default apply -f - >/dev/null <<'EOF'
+apiVersion: v1
+kind: Pod
+metadata: { name: probe }
+spec:
+  restartPolicy: Never
+  securityContext: { runAsNonRoot: true, runAsUser: 100, seccompProfile: { type: RuntimeDefault } }
+  containers:
+    - name: curl
+      image: curlimages/curl:8.11.1
+      command: ["sh", "-c", 'for s in orders.orders payments.payments; do printf "%s %s\n" "$s" "$(curl -s -o /dev/null -m 5 -w "%{http_code}" http://$s/)"; done']
+      resources: { requests: { cpu: 10m, memory: 16Mi }, limits: { memory: 32Mi } }
+      readinessProbe: { exec: { command: ["true"] }, periodSeconds: 5 }
+      securityContext: { allowPrivilegeEscalation: false, capabilities: { drop: ["ALL"] } }
+EOF
 k -n default wait --for=jsonpath='{.status.phase}'=Succeeded pod/probe --timeout=120s >/dev/null
 answers=$(k -n default logs probe)
 echo "$answers" | sed 's/^/   /'
