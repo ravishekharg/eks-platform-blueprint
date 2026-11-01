@@ -23,7 +23,7 @@ zero-downtime rollouts and phased migrations. None of it is code from a former e
 | **CI** | Terraform fmt/validate/tflint/Checkov per environment; Helm lint, render of every service × environment, kubeconform schema checks, Kyverno CLI; app tests, image build and Trivy scan | [`.github/workflows/ci.yml`](.github/workflows/ci.yml) |
 | **Runbooks** | A wave-based OpenStack → EKS migration with weighted cutovers and rollback triggers; one-minor-version EKS upgrades | [`docs/runbooks/`](docs/runbooks/) |
 
-Design choices and their trade-offs: [`docs/decisions.md`](docs/decisions.md).
+Design choices and their trade-offs: [`docs/decisions.md`](docs/decisions.md); system view: [`docs/architecture.md`](docs/architecture.md).
 
 ## Architecture
 
@@ -87,7 +87,7 @@ while it runs; `terraform destroy` removes everything.
 | Local deployment on kind | Both services deploy, one replica per zone, pass startup/readiness/liveness probes |
 | Zero-downtime rollout | **0 failed requests** across full rollouts (results below) |
 | Kyverno policies | Every service × environment passes; a `:latest`/no-resources/root pod and a 1-replica prod Deployment are rejected (`scripts/policy-test.sh`) |
-| Argo CD path | Manifests written; runs once the repository is public |
+| **Argo CD path** | **Verified live in CI** (`scripts/gitops-e2e.sh`, below) |
 
 ## Rollout test results
 
@@ -105,6 +105,24 @@ The third run is a control: on a small local cluster, endpoint removal reaches k
 instantly, so even reduced protections didn't drop requests here. The preStop sleep and the
 app's drain exist for environments where that propagation is slow: AWS load balancer target
 deregistration, many nodes, external proxies. That's the case to test again on EKS.
+
+## GitOps path, verified live
+
+`scripts/gitops-e2e.sh` (CI on `main`, kind with 2 zones, 2026-11-01): Argo CD is given **only** the root app.
+Everything else must arrive from this repository.
+
+| Check | Result |
+|---|---|
+| Add-ons (metrics-server, Kyverno, kube-prometheus-stack), policies and both services | all 7 Applications Synced/Healthy **196 s** after an empty cluster |
+| Services through their NetworkPolicies | 200 from the ingress namespace; **blocked** from `default` (default-deny works) |
+| Drift: payments Service deleted, orders Deployment edited by hand | Service recreated after **1 s**, edit reverted after **1 s** (self-heal) |
+| Admission: a `:latest`, unconstrained, root pod | rejected by all three policies Argo CD installed |
+
+It found two real problems on the way:
+- Argo CD 2.13 (chart 7.7) can't diff objects from Kubernetes 1.33+ (`status.terminatingReplicas`), so it now uses chart 10.10.5 (Argo CD 3.5).
+- metrics-server needs `--kubelet-insecure-tls` on kind only, so add-ons now take an optional per-provider values file and EKS never gets the flag.
+
+The test client is held to the same Kyverno policies as everything else; there is no exemption for tests.
 
 ## What I'd add for production
 External Secrets Operator with AWS Secrets Manager; the AWS Load Balancer Controller and
