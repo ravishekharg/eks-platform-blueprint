@@ -34,10 +34,14 @@ converged=$(( $(date +%s) - t0 ))
 app_list=$(echo "$apps" | jq -c '[.items[] | {name: .metadata.name, sync: .status.sync.status, health: .status.health.status}]')
 echo "   all $total Applications Synced/Healthy after ${converged}s (cluster creation included)"
 
-echo "== the services answer"
-# the test client is an ordinary pod in an ordinary namespace, so it must meet the same Kyverno policies as
-# everything else (immutable tag, requests and a memory limit, a readiness probe, non-root): no exemption for tests
-k -n default apply -f - >/dev/null <<'EOF'
+echo "== the services answer from the ingress namespace, and default-deny blocks everyone else"
+# the test client is an ordinary pod, so it must meet the same Kyverno policies as everything else (immutable tag,
+# requests and a memory limit, a readiness probe, non-root): no exemption for tests. The services' NetworkPolicies
+# admit only the ingress namespace, monitoring and declared callers, so the same probe runs from two places.
+probe_from() {   # probe_from <namespace>: prints "<service> <http code>" per service (000 = no connection)
+  local ns=$1
+  k create namespace "$ns" >/dev/null 2>&1 || true
+  k -n "$ns" apply -f - >/dev/null <<'EOF'
 apiVersion: v1
 kind: Pod
 metadata: { name: probe }
@@ -52,10 +56,14 @@ spec:
       readinessProbe: { exec: { command: ["true"] }, periodSeconds: 5 }
       securityContext: { allowPrivilegeEscalation: false, capabilities: { drop: ["ALL"] } }
 EOF
-k -n default wait --for=jsonpath='{.status.phase}'=Succeeded pod/probe --timeout=120s >/dev/null
-answers=$(k -n default logs probe)
-echo "$answers" | sed 's/^/   /'
-k -n default delete pod probe --wait=false >/dev/null
+  k -n "$ns" wait --for=jsonpath='{.status.phase}'=Succeeded pod/probe --timeout=120s >/dev/null
+  k -n "$ns" logs probe
+  k -n "$ns" delete pod probe --wait=false >/dev/null
+}
+answers=$(probe_from ingress-nginx)
+blocked=$(probe_from default)
+echo "$answers" | sed 's/^/   from ingress-nginx: /'
+echo "$blocked" | sed 's/^/   from default:       /'
 
 # time until Argo CD puts something back (self-heal), polling once a second
 healed_after() {   # healed_after <seconds limit> <check command...>
@@ -87,19 +95,21 @@ fi
 echo "   rejected: $rejected"
 echo "$denial" | grep -o 'disallow-latest-tag\|require-requests-and-probes\|restrict-privileges' | sort -u | sed 's/^/   policy: /'
 
-jq -n --argjson apps "$app_list" --argjson converged "$converged" --arg answers "$answers" \
+jq -n --argjson apps "$app_list" --argjson converged "$converged" --arg answers "$answers" --arg blocked "$blocked" \
   --argjson svc "$svc_heal" --argjson env "$env_heal" --argjson rejected "$rejected" \
   --arg policies "$(echo "$denial" | grep -o 'disallow-latest-tag\|require-requests-and-probes\|restrict-privileges' | sort -u | paste -sd, -)" '{
     applications: $apps,
     converged_after_s: $converged,
     services: ($answers | split("\n") | map(select(length > 0) | split(" ") | {(.[0]): .[1]}) | add),
+    from_default_namespace: ($blocked | split("\n") | map(select(length > 0) | split(" ") | {(.[0]): .[1]}) | add),
     self_heal: {service_recreated_after_s: $svc, deployment_edit_reverted_after_s: $env},
     bad_pod_rejected: $rejected,
     rejecting_policies: ($policies | split(",") | map(select(length > 0)))
   }' | tee gitops-e2e.json
 
 ok=1
-[ "$(jq '[.services[]] | all(. == "200")' gitops-e2e.json)" = true ] || { echo "FAIL: a service didn't answer 200"; ok=0; }
+[ "$(jq '[.services[]] | all(. == "200")' gitops-e2e.json)" = true ] || { echo "FAIL: a service didn't answer 200 from the ingress namespace"; ok=0; }
+[ "$(jq '[.from_default_namespace[]] | all(. == "000")' gitops-e2e.json)" = true ] || { echo "FAIL: default-deny let a call from the default namespace through"; ok=0; }
 [ "$svc_heal" -ge 0 ] || { echo "FAIL: the deleted Service wasn't recreated"; ok=0; }
 [ "$env_heal" -ge 0 ] || { echo "FAIL: the hand edit wasn't reverted"; ok=0; }
 [ "$rejected" = true ] || { echo "FAIL: the bad pod was admitted"; ok=0; }
