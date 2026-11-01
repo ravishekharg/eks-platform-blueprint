@@ -33,7 +33,9 @@ spec:
           targetRevision: '{{ .version }}'
           helm:
             releaseName: '{{ .addon }}'
-            valueFiles: ['$values/gitops/platform/values/{{ .addon }}.yaml']
+            valueFiles:
+              - '$values/gitops/platform/values/{{ .addon }}.yaml'
+              - '$values/gitops/platform/values/{{ .addon }}-{{ index .metadata.labels "provider" }}.yaml'   # per provider, optional
             ignoreMissingValueFiles: true
         - repoURL: https://github.com/ravishekharg/eks-platform-blueprint.git
           targetRevision: main

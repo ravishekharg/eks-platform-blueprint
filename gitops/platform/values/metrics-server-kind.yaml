@@ -1,0 +1,6 @@
+# kind only (provider=kind): kind's kubelets serve self-signed certificates without the node IPs, so metrics-server
+# can't verify them and the add-on stays Degraded. EKS kubelets have proper certificates; this file never reaches them.
+# Helm replaces lists, so the shared args are repeated here.
+args:
+  - --kubelet-preferred-address-types=InternalIP
+  - --kubelet-insecure-tls
