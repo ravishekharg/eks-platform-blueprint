@@ -111,3 +111,26 @@ jobs:
           severity: CRITICAL
           ignore-unfixed: true
           exit-code: "1"
+
+  gitops-e2e:
+    # Argo CD gets only the root app; add-ons, policies and services must all arrive from this repository (main),
+    # then self-heal and admission control are checked live. Runs on main because the ApplicationSets track main.
+    if: github.ref == 'refs/heads/main'
+    needs: [charts, app]
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: helm/kind-action@v1
+        with: { install_only: true }
+      - uses: azure/setup-helm@v4
+        with: { version: v3.16.2 }
+      - name: bootstrap Argo CD and verify the GitOps path
+        run: bash scripts/gitops-e2e.sh
+      - name: summary
+        if: always()
+        run: |
+          [ -f gitops-e2e.json ] || { echo "## GitOps e2e: no result" >> "$GITHUB_STEP_SUMMARY"; exit 0; }
+          { echo "## GitOps path on kind"; echo; echo '```json'; cat gitops-e2e.json; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - if: failure()
+        run: kubectl --context kind-blueprint -n argocd get applications -o wide || true
