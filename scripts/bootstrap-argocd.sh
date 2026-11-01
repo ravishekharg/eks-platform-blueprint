@@ -11,7 +11,7 @@ ENV=${1:?usage: bootstrap-argocd.sh <env> [provider] [karpenter-queue] [karpente
 PROVIDER=${2:-kind}
 QUEUE=${3:-}
 NODE_ROLE=${4:-}
-ARGOCD_CHART_VERSION=7.7.11
+ARGOCD_CHART_VERSION=10.10.5  # Argo CD 3.5: 2.13 (chart 7.7) fails to diff Kubernetes 1.33+ objects (status.terminatingReplicas)
 # Pin every command to this cluster, so another tool switching the shared kubeconfig
 # context mid-run (e.g. a second kind cluster being created) can't redirect us.
 CONTEXT=${KUBE_CONTEXT:-kind-blueprint}
